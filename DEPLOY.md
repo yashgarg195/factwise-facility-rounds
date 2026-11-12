@@ -1,37 +1,33 @@
-# Deploy FeverTrack (free tier)
+# Deploy Facility Rounds (free tier)
 
 The app is a static site (`output: "export"`). It has no server and no database. The build writes the `out/` folder.
 
-## Step 1: Put the code on GitHub (on the other device)
+## Use the GitHub repository
 
-1. Unzip `FactWise-TPM-Yash-Garg.zip`. Open the folder `factwise-quarantine-app`.
-2. Create an empty GitHub repository, for example `factwise-quarantine`. Do not add a README.
-3. In the `factwise-quarantine-app` folder, run these commands. Replace `YOUR-USER` with your GitHub user name.
+Import the `main` branch of [factwise-facility-rounds](https://github.com/yashgarg195/factwise-facility-rounds) into your hosting provider. To run the same source on another device, clone the repository:
 
 ```bash
-git init
-git add .
-git commit -m "FeverTrack prototype"
-git branch -M main
-git remote add origin https://github.com/YOUR-USER/factwise-quarantine.git
-git push -u origin main
+git clone https://github.com/yashgarg195/factwise-facility-rounds.git
+cd factwise-facility-rounds
+npm ci
+npm run dev
 ```
 
 ## Option A: Vercel (recommended)
 
 1. Go to https://vercel.com and sign in with GitHub.
 2. Click **Add New → Project**. Import the repository.
-3. Set **Project Name** to `factwise-quarantine-yash`. The URL is then https://factwise-quarantine-yash.vercel.app.
+3. Use `factwise-facility-rounds` as the project name if available.
 4. Keep the defaults (Framework Preset: Next.js). Click **Deploy**.
-5. Open the URL in a private window. Do the 3-step demo in `README.md`.
+5. Copy the production URL from Vercel. Open it in a private window and do the three-step demo in `README.md`.
 
-If the name is not available, use a different name. Then change the link in the answers PDF. Edit `answers.html` in the `submission-src` folder of the zip, and follow `HOW-TO-REBUILD-PDF.txt` in the same folder.
+Add the verified production URL to the assessment answers PDF.
 
 ## Option B: Render (Static Site)
 
 1. Go to https://render.com and sign in with GitHub.
 2. Click **New → Static Site**. Select the repository.
-3. Build command: `npm install && npm run build`
+3. Build command: `npm ci && npm run build`
 4. Publish directory: `out`
 5. Click **Create Static Site**. The URL is `https://NAME.onrender.com`.
 

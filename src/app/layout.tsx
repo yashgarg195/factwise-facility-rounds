@@ -6,7 +6,7 @@ const serif = Source_Serif_4({ subsets: ["latin"], style: ["normal", "italic"], 
 const sans = Inter({ subsets: ["latin"], variable: "--ff-sans" });
 
 export const metadata: Metadata = {
-  title: "FeverTrack · Quarantine & Treatment Centre (Prototype)",
+  title: "Facility Rounds",
   description: "Prototype for daily temperature tracking, doctor visits, discharges and outcomes. Synthetic data only.",
 };
 

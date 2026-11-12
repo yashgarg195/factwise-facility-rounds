@@ -139,7 +139,7 @@ export function Logo() {
         </g>
         <circle cx="24" cy="9" r="3" fill="#d4572a" />
       </svg>
-      FeverTrack
+      Facility Rounds
     </span>
   );
 }

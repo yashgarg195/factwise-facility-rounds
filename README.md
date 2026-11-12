@@ -1,4 +1,4 @@
-# FeverTrack: quarantine and treatment centre prototype
+# Facility Rounds
 
 A prototype for a 74-bed quarantine and treatment facility. Nurses record one temperature per patient per day. Doctors visit after the reading. Administrators confirm discharges, free beds, and track outcomes. All data is synthetic.
 

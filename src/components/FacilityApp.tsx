@@ -7,7 +7,6 @@ import {
   canConfirmDischarge,
   canRecommend,
   doctorStatus,
-  eligibility,
   occupancy,
   outcomes,
   readingFor,
@@ -82,7 +81,6 @@ export function FacilityApp() {
   const ready = active.filter((p) => doctorStatus(state, p, today) === "ready_for_visit").sort(byDemoThenRoom);
   const visited = active.filter((p) => doctorStatus(state, p, today) === "visit_complete").length;
   const toRecommend = active.filter((p) => canRecommend(state, p, today).allowed).sort(byDemoThenRoom);
-  const eligibleNotRecommended = active.filter((p) => p.status === "admitted" && eligibility(state, p, today).eligible).length;
   const readyDischarges = active
     .filter((p) => p.status === "pending_discharge" && canConfirmDischarge(state, p, today).allowed)
     .sort((a, b) => (a.recommendation?.recommendedAt ?? "").localeCompare(b.recommendation?.recommendedAt ?? ""));
@@ -116,7 +114,7 @@ export function FacilityApp() {
         { label: "Ready for visit", value: String(ready.length), note: "Temperature recorded", alert: ready.length > 0 },
         { label: "Waiting for temperature", value: String(awaiting.length), note: "Nurse has not measured yet" },
         { label: "Visits today", value: `${visited}/${active.length}`, bar: visited / Math.max(1, active.length) },
-        { label: "Eligible, not recommended", value: String(eligibleNotRecommended), note: "3 full days without fever" },
+        { label: "Ready to recommend", value: String(toRecommend.length), note: "Today's visit complete" },
       ],
       next: ready[0] ?? toRecommend[0],
       nextLabel: ready[0] ? "Start visit" : "Review discharge",

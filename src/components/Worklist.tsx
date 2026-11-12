@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { canRecommend, doctorStatus, eligibility, readingFor } from "@/lib/rules";
+import { canRecommend, doctorStatus, readingFor } from "@/lib/rules";
 import type { FacilityState, Patient, Role } from "@/lib/types";
 import { DemoTag, DischargeBadge, DoctorBadge, TemperatureBadge } from "./badges";
 import { Button } from "./ui";
@@ -26,7 +26,7 @@ function filtersFor(role: Role, state: FacilityState, today: string): Filter[] {
       { id: "ready", label: "Ready for visit", test: (p) => doctorStatus(state, p, today) === "ready_for_visit" },
       { id: "waiting", label: "Waiting for temperature", test: (p) => doctorStatus(state, p, today) === "waiting_for_temperature" },
       { id: "complete", label: "Visit complete", test: (p) => doctorStatus(state, p, today) === "visit_complete" },
-      { id: "eligible", label: "Eligible for discharge", test: (p) => eligibility(state, p, today).eligible },
+      { id: "eligible", label: "Ready to recommend", test: (p) => canRecommend(state, p, today).allowed },
     ];
   }
   return [
@@ -37,15 +37,24 @@ function filtersFor(role: Role, state: FacilityState, today: string): Filter[] {
 }
 
 const DOCTOR_ORDER = { ready_for_visit: 0, waiting_for_temperature: 1, visit_complete: 2 } as const;
+const worklistOrders = [
+  ["priority", "Queue priority"], ["room-asc", "Room, low to high"], ["room-desc", "Room, high to low"], ["name", "Patient name, A–Z"],
+] as const;
+type WorklistOrder = typeof worklistOrders[number][0];
 
-function sortFor(role: Role, state: FacilityState, today: string) {
+function sortFor(role: Role, state: FacilityState, today: string, order: WorklistOrder) {
   const rank = (p: Patient) => {
     if (role === "nurse") return readingFor(state, p.id, today) ? 1 : 0;
-    if (role === "doctor") return DOCTOR_ORDER[doctorStatus(state, p, today)];
+    if (role === "doctor") return canRecommend(state, p, today).allowed ? -1 : DOCTOR_ORDER[doctorStatus(state, p, today)];
     return 0;
   };
-  return (a: Patient, b: Patient) =>
-    rank(a) - rank(b) || Number(!!b.isDemo) - Number(!!a.isDemo) || a.room - b.room;
+  return (a: Patient, b: Patient) => {
+    const room = a.room - b.room;
+    if (order === "room-asc") return room;
+    if (order === "room-desc") return -room;
+    if (order === "name") return a.name.localeCompare(b.name) || room;
+    return rank(a) - rank(b) || Number(!!b.isDemo) - Number(!!a.isDemo) || room;
+  };
 }
 
 function actionFor(role: Role, state: FacilityState, p: Patient, today: string) {
@@ -84,8 +93,9 @@ export function Worklist({
 }) {
   const filters = filtersFor(role, state, today);
   const [filterId, setFilterId] = useState("all");
+  const [sortOrder, setSortOrder] = useState<WorklistOrder>("priority");
   const filter = filters.find((f) => f.id === filterId) ?? filters[0];
-  const rows = patients.filter(filter.test).sort(sortFor(role, state, today));
+  const rows = patients.filter(filter.test).sort(sortFor(role, state, today, sortOrder));
 
   return (
     <section className="rounded-[24px] bg-mist p-2 sm:p-3" aria-labelledby="worklist-title">
@@ -108,7 +118,8 @@ export function Worklist({
             className="h-11 w-full rounded-[16px] border border-hairline bg-paper px-4 text-[15px] placeholder:text-smoke focus:border-ink focus:outline-none"
           />
         </div>
-        <div className="flex w-full flex-wrap gap-2" role="group" aria-label="Filter patients">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter patients">
           {filters.map((f) => (
             <button
               key={f.id}
@@ -120,6 +131,13 @@ export function Worklist({
               {f.label} <span className="num opacity-60">{patients.filter(f.test).length}</span>
             </button>
           ))}
+        </div>
+          <label className="flex flex-wrap items-center gap-2 text-[13px] text-muted">Sort patients by
+            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as WorklistOrder)}
+              className="max-w-full rounded-full border border-hairline bg-paper px-3 py-2 text-ink">
+              {worklistOrders.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { formatTime } from "@/lib/dates";
-import { DOCTOR_STATUS_LABELS, doctorStatus, eligibility, readingFor, type DoctorStatus } from "@/lib/rules";
+import { DOCTOR_STATUS_LABELS, canConfirmDischarge, canRecommend, doctorStatus, eligibility, readingFor, type DoctorStatus } from "@/lib/rules";
 import type { FacilityState, Patient } from "@/lib/types";
 import { FEVER_FREE_DAYS_REQUIRED } from "@/lib/types";
 import { Chip, type ChipKind } from "./ui";
@@ -31,13 +31,14 @@ export function DoctorBadge({ state, patient, today }: Props) {
 }
 
 export function DischargeBadge({ state, patient, today }: Props) {
-  const e = eligibility(state, patient, today);
   if (patient.status === "pending_discharge") {
-    return e.eligible ? <Chip kind="ink">Discharge pending</Chip> : <Chip kind="blocked">Recommendation blocked</Chip>;
+    return canConfirmDischarge(state, patient, today).allowed
+      ? <Chip kind="ink">Discharge pending</Chip> : <Chip kind="blocked">Recommendation blocked</Chip>;
   }
   if (patient.status === "discharged") return <Chip kind="go">Discharged</Chip>;
   if (patient.status === "deceased") return <Chip kind="neutral">Deceased</Chip>;
-  if (e.eligible) return <Chip kind="go">Eligible for discharge</Chip>;
+  if (canRecommend(state, patient, today).allowed) return <Chip kind="go">Ready to recommend</Chip>;
+  const e = eligibility(state, patient, today);
   return <FeverFreeDots streak={Math.min(e.streak, FEVER_FREE_DAYS_REQUIRED)} />;
 }
 

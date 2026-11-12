@@ -114,7 +114,12 @@ export function createSeedState(now: Date): FacilityState {
   // Room 6: recommended yesterday, but a fever today makes the recommendation stale.
   const stale = newPatient(6, 9, {
     status: "pending_discharge",
-    recommendation: { recommendedAt: facilityInstant(addDays(today, -1), 14, 10), facilityDate: addDays(today, -1) },
+    recommendation: {
+      recommendedAt: facilityInstant(addDays(today, -1), 14, 10),
+      facilityDate: addDays(today, -1),
+      evidence: [1, 2, 3, 4].map((offset) => ({ date: addDays(today, -offset), revision: 0 })),
+      review: { at: todayAt(0.2), reason: "Fever recorded after recommendation. The doctor must review it." },
+    },
   });
   history(stale, { fevers: [9, 8, 7, 6] });
   addReading(stale.id, today, true, 38.2);

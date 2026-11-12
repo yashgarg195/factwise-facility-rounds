@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { addDays, daysBetween, formatDate, formatDateTime, formatTime } from "@/lib/dates";
+import { addDays, daysBetween, facilityDate, formatDate, formatDateTime, formatTime } from "@/lib/dates";
 import {
   NOTE_MAX_LENGTH,
   TEMP_MAX_C,
@@ -16,6 +16,7 @@ import {
   parseTemperature,
   readingFor,
   recommendDischarge,
+  recommendationEvidence,
   recordDeath,
   recordTemperature,
   visitFor,
@@ -23,7 +24,7 @@ import {
   type ActionResult,
   type DayCheck,
 } from "@/lib/rules";
-import type { FacilityState, Patient, Role } from "@/lib/types";
+import type { FacilityState, Patient, Role, TemperatureReading } from "@/lib/types";
 import { FEVER_FREE_DAYS_REQUIRED } from "@/lib/types";
 import { DemoTag, DischargeBadge, DoctorBadge, TemperatureBadge } from "./badges";
 import { Button, Chip, ConfirmButton, Eyebrow, Note } from "./ui";
@@ -104,6 +105,7 @@ export function PatientPanel({ state, role, today, patient, run, onClose }: Pane
           {active && role === "admin" && <AdminActions state={state} patient={patient} today={today} run={run} />}
           {active && <EligibilityCard state={state} patient={patient} today={today} />}
           <ReadingHistory state={state} patient={patient} today={today} />
+          {role !== "nurse" && <RecommendationHistory patient={patient} />}
           <VisitHistory state={state} patient={patient} />
         </div>
       </div>
@@ -137,9 +139,25 @@ type ActionProps = { state: FacilityState; patient: Patient; today: string; run:
 
 function NurseActions({ state, patient, today, run }: ActionProps) {
   const reading = readingFor(state, patient.id, today);
-  const [correcting, setCorrecting] = useState(false);
+  const [editDate, setEditDate] = useState<string | null>(null);
 
-  if (reading && !correcting) {
+  if (editDate !== null) {
+    const existing = readingFor(state, patient.id, editDate);
+    return (
+      <ActionCard title="Add or correct a dated reading">
+        <label className="mb-4 block text-[15px] font-medium">
+          Reading date
+          <input type="date" min={patient.admittedOn} max={today} value={editDate} onChange={(event) => setEditDate(event.target.value)}
+            className="mt-2 block rounded-[16px] border border-hairline bg-paper px-4 py-2" />
+        </label>
+        {editDate && editDate >= patient.admittedOn && editDate <= today ? (
+          <TemperatureForm key={`${editDate}:${existing?.changes?.length ?? 0}`} patient={patient} existing={existing}
+            amendmentDate={editDate} run={run} onDone={() => setEditDate(null)} onCancel={() => setEditDate(null)} />
+        ) : <Button variant="ghost" onClick={() => setEditDate(null)}>Cancel</Button>}
+      </ActionCard>
+    );
+  }
+  if (reading) {
     const visited = !!visitFor(state, patient.id, today);
     return (
       <ActionCard title="Today's temperature">
@@ -160,8 +178,11 @@ function NurseActions({ state, patient, today, run }: ActionProps) {
         </div>
         <p className="mt-4 text-[15px] text-muted">Done for today. Do not measure again.</p>
         <div className="mt-4">
-          <Button variant="ghost" size="sm" onClick={() => setCorrecting(true)}>
+          <Button variant="ghost" size="sm" onClick={() => setEditDate(today)}>
             Correct reading
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setEditDate(addDays(today, -1))} disabled={today === patient.admittedOn}>
+            Add or correct a past reading
           </Button>
           {visited && <p className="mt-2 text-[13px] text-sienna">The doctor already visited today. Tell the doctor about any correction.</p>}
         </div>
@@ -169,15 +190,11 @@ function NurseActions({ state, patient, today, run }: ActionProps) {
     );
   }
   return (
-    <ActionCard title={reading ? "Correct today's temperature" : "Record today's temperature"}>
-      <TemperatureForm
-        key={reading ? "correct" : "new"}
-        patient={patient}
-        existing={reading ? { celsius: reading.celsius, fever: reading.fever } : undefined}
-        run={run}
-        onDone={() => setCorrecting(false)}
-        onCancel={reading ? () => setCorrecting(false) : undefined}
-      />
+    <ActionCard title="Record today's temperature">
+      <TemperatureForm patient={patient} run={run} onDone={() => setEditDate(null)} />
+      {today > patient.admittedOn && <Button className="mt-3" variant="ghost" size="sm" onClick={() => setEditDate(addDays(today, -1))}>
+        Add or correct a past reading
+      </Button>}
     </ActionCard>
   );
 }
@@ -185,12 +202,14 @@ function NurseActions({ state, patient, today, run }: ActionProps) {
 function TemperatureForm({
   patient,
   existing,
+  amendmentDate,
   run,
   onDone,
   onCancel,
 }: {
   patient: Patient;
-  existing?: { celsius: number; fever: boolean };
+  existing?: TemperatureReading;
+  amendmentDate?: string;
   run: Run;
   onDone: () => void;
   onCancel?: () => void;
@@ -199,14 +218,16 @@ function TemperatureForm({
   const [fever, setFever] = useState<boolean | null>(existing ? existing.fever : null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const isCorrection = !!existing;
+  const [reason, setReason] = useState("");
 
   const parsed = celsius ? parseTemperature(celsius) : {};
   const warning = parsed.value !== undefined && fever !== null ? feverSelectionWarning(parsed.value, fever) : null;
 
   const save = () => {
     const result = run((s, now) =>
-      recordTemperature(s, "nurse", { patientId: patient.id, celsius, fever, correction: isCorrection }, now),
+      recordTemperature(s, "nurse", { patientId: patient.id, celsius, fever, amendment: amendmentDate ? {
+        date: amendmentDate, reason, expectedRevision: existing ? existing.changes?.length ?? 0 : null,
+      } : undefined }, now),
     );
     if (result.ok) onDone();
     else {
@@ -221,7 +242,8 @@ function TemperatureForm({
     const check = parseTemperature(celsius);
     if (check.error) return setError(check.error);
     if (fever === null) return setError("Select Fever or No fever.");
-    if (isCorrection) return setConfirming(true);
+    if (amendmentDate && !reason.trim()) return setError("Enter a reason for the change.");
+    if (amendmentDate) return setConfirming(true);
     save();
   };
 
@@ -274,13 +296,16 @@ function TemperatureForm({
           ))}
         </div>
       </fieldset>
+      {amendmentDate && <label className="block text-[15px] font-medium">Reason for change
+        <textarea value={reason} onChange={(event) => { setReason(event.target.value); setConfirming(false); }} rows={2} maxLength={200}
+          className="mt-2 w-full rounded-[16px] border border-hairline bg-paper px-4 py-3" />
+      </label>}
       {warning && <Note tone="warn">{warning}</Note>}
       {error && <Note tone="error">{error}</Note>}
-      {confirming && existing ? (
+      {confirming && amendmentDate ? (
         <div role="alertdialog" className="rise rounded-[16px] bg-paper p-4 shadow-[var(--shadow-popover)]">
           <p className="num mb-3 text-[15px]">
-            Replace {existing.celsius.toFixed(1)} °C ({existing.fever ? "Fever" : "No fever"}) with {celsius} °C (
-            {fever ? "Fever" : "No fever"})?
+            Save {celsius} °C ({fever ? "Fever" : "No fever"}) for {formatDate(amendmentDate)}? This may put discharge on hold.
           </p>
           <div className="flex gap-2">
             <Button size="sm" onClick={save}>
@@ -294,7 +319,7 @@ function TemperatureForm({
       ) : (
         <div className="flex flex-wrap gap-2">
           <Button type="submit">
-            {isCorrection ? "Save correction" : "Save reading"} <span aria-hidden className="arrow">→</span>
+            {amendmentDate ? "Save dated reading" : "Save reading"} <span aria-hidden className="arrow">→</span>
           </Button>
           {onCancel && (
             <Button variant="ghost" onClick={onCancel}>
@@ -315,7 +340,7 @@ function DoctorActions({ state, patient, today, run }: ActionProps) {
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const recommend = canRecommend(state, patient, today);
-  const elig = eligibility(state, patient, today);
+  const discharge = canConfirmDischarge(state, patient, today);
 
   const act = (fn: (s: FacilityState, now: Date) => ActionResult) => {
     setError(null);
@@ -377,15 +402,14 @@ function DoctorActions({ state, patient, today, run }: ActionProps) {
           <h4 className="mb-3 text-[15px] font-medium">Discharge</h4>
           {patient.status === "pending_discharge" && patient.recommendation && (
             <div className="space-y-3">
-              {elig.eligible ? (
+              {discharge.allowed ? (
                 <Note tone="info">
                   You recommended discharge on {formatDateTime(patient.recommendation.recommendedAt)}. Waiting for the Administrator to
                   confirm.
                 </Note>
               ) : (
                 <Note tone="error">
-                  Your recommendation from {formatDateTime(patient.recommendation.recommendedAt)} is blocked: {elig.blockers.join("; ")}.
-                  Withdraw it. Recommend again when the patient is eligible.
+                  Recommendation from {formatDateTime(patient.recommendation.recommendedAt)}. {discharge.reason}
                 </Note>
               )}
               <ConfirmButton
@@ -393,18 +417,20 @@ function DoctorActions({ state, patient, today, run }: ActionProps) {
                 label="Withdraw recommendation"
                 question="Withdraw the discharge recommendation?"
                 confirmLabel="Withdraw"
-                onConfirm={() => act((s) => withdrawRecommendation(s, "doctor", { patientId: patient.id }))}
+                onConfirm={() => act((s, now) => withdrawRecommendation(s, "doctor", { patientId: patient.id }, now))}
               />
             </div>
           )}
-          {patient.status === "admitted" && (
+          {(patient.status === "admitted" || !discharge.allowed) && (
             <div className="space-y-2">
               <Button
                 variant={recommend.allowed ? "filled" : "ghost"}
-                onClick={() => act((s, now) => recommendDischarge(s, "doctor", { patientId: patient.id }, now))}
+                onClick={() => act((s, now) => recommendDischarge(s, "doctor", {
+                  patientId: patient.id, evidence: recommendationEvidence(state, patient.id, today),
+                }, now))}
                 disabled={!recommend.allowed}
               >
-                Recommend discharge
+                {patient.recommendation ? "Renew recommendation" : "Recommend discharge"}
               </Button>
               {!recommend.allowed && <p className="text-[14px] text-muted">{recommend.reason}</p>}
             </div>
@@ -446,7 +472,7 @@ function AdminActions({ state, patient, today, run }: ActionProps) {
             <p className="text-[15px]">Doctor recommended discharge on {formatDateTime(patient.recommendation.recommendedAt)}.</p>
           )}
           {check.allowed ? (
-            <Note tone="success">Eligibility checked again just now: still 3 full days without fever.</Note>
+            <Note tone="success">Reviewed readings and current eligibility are valid.</Note>
           ) : (
             <Note tone="error">{check.reason}</Note>
           )}
@@ -494,7 +520,7 @@ function DayNode({ check, label, isToday }: { check: DayCheck; label: string; is
 function EligibilityCard({ state, patient, today }: { state: FacilityState; patient: Patient; today: string }) {
   const e = eligibility(state, patient, today);
   const stamp = e.eligible ? (
-    <span className="stamp stamp-go">3 days clear</span>
+    <span className="stamp stamp-go">3 days recorded</span>
   ) : e.today.result === "fever" ? (
     <span className="stamp stamp-pop">Fever</span>
   ) : null;
@@ -503,7 +529,7 @@ function EligibilityCard({ state, patient, today }: { state: FacilityState; pati
       <p className="mb-5 max-w-[38ch] pr-28 text-[15px] text-muted">
         {e.eligible ? (
           <>
-            <strong className="font-medium text-go">Eligible.</strong> 3 full days without fever.
+            <strong className="font-medium text-go">3 completed days with no fever recorded.</strong>
           </>
         ) : (
           <>
@@ -519,7 +545,7 @@ function EligibilityCard({ state, patient, today }: { state: FacilityState; pati
         <DayNode check={e.today} label="Today" isToday />
       </ol>
       <p className="mt-5 text-[13px] leading-relaxed text-ash">
-        Rule: the {FEVER_FREE_DAYS_REQUIRED} completed facility days (IST) before today must each have a No fever reading. Today counts
+        Rule: the {FEVER_FREE_DAYS_REQUIRED} completed facility days (IST) before today must each have a No fever reading. The admission date is excluded. Today counts
         only after midnight. A fever today blocks discharge. Current streak: {e.streak} day{e.streak === 1 ? "" : "s"}.
       </p>
     </InfoCard>
@@ -527,9 +553,11 @@ function EligibilityCard({ state, patient, today }: { state: FacilityState; pati
 }
 
 function ReadingHistory({ state, patient, today }: { state: FacilityState; patient: Patient; today: string }) {
-  const last = isActive(patient) ? today : addDays(today, -1);
+  const last = isActive(patient) ? today : facilityDate(new Date(patient.dischargedAt ?? patient.deceasedAt ?? `${today}T12:00:00Z`));
   const first = [addDays(last, -9), patient.admittedOn].sort()[1];
   const days: string[] = [];
+  const changes = state.readings.filter((r) => r.patientId === patient.id && r.changes?.length)
+    .sort((a, b) => b.date.localeCompare(a.date));
   for (let d = last; d >= first; d = addDays(d, -1)) days.push(d);
   if (days.length === 0) return null;
   return (
@@ -570,6 +598,36 @@ function ReadingHistory({ state, patient, today }: { state: FacilityState; patie
           })}
         </tbody>
       </table>
+      {changes.length > 0 && <div className="mt-4 border-t border-hairline pt-3">
+        <h4 className="font-medium">Dated reading changes</h4>
+        <ul className="mt-2 divide-y divide-hairline text-[14px]">
+          {changes.flatMap((reading) => [...(reading.changes ?? [])].reverse().map((change, index) =>
+            <li key={`${reading.id}:${index}`} className="py-2">
+              <p>{formatDate(reading.date)} · Saved {formatDateTime(change.at)}</p>
+              <p className="text-muted">
+                {change.previous ? `${change.previous.celsius.toFixed(1)} °C, ${change.previous.fever ? "Fever" : "No fever"}` : "Missing reading"}
+                {" → "}{change.next.celsius.toFixed(1)} °C, {change.next.fever ? "Fever" : "No fever"} · {change.reason}
+              </p>
+            </li>))}
+        </ul>
+      </div>}
+    </InfoCard>
+  );
+}
+
+function RecommendationHistory({ patient }: { patient: Patient }) {
+  const history = [...(patient.recommendationHistory ?? []), ...(patient.recommendation ? [patient.recommendation] : [])];
+  if (!history.length) return null;
+  return (
+    <InfoCard title="Recommendation history">
+      <ul className="divide-y divide-hairline text-[14px]">
+        {history.reverse().map((entry, index) => <li key={`${entry.recommendedAt}:${index}`} className="py-2">
+          <p>Recommended {formatDateTime(entry.recommendedAt)}</p>
+          <p className="text-muted">{entry.review
+            ? `${formatDateTime(entry.review.at)} · ${entry.review.reason}`
+            : patient.status === "discharged" ? "Used for discharge" : entry.evidence ? "Readings reviewed" : "Reading versions unavailable"}</p>
+        </li>)}
+      </ul>
     </InfoCard>
   );
 }

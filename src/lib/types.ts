@@ -12,7 +12,13 @@ export type PatientStatus = "admitted" | "pending_discharge" | "discharged" | "d
 export interface DischargeRecommendation {
   recommendedAt: string;
   facilityDate: string;
+  evidence?: ReadingVersion[];
+  review?: { at: string; reason: string };
 }
+
+export type ReadingVersion = { date: string; revision: number };
+type ReadingValues = { celsius: number; fever: boolean };
+export type ReadingChange = { at: string; reason: string; previous: ReadingValues | null; next: ReadingValues };
 
 export interface Patient {
   id: string;
@@ -24,6 +30,7 @@ export interface Patient {
   status: PatientStatus;
   isDemo?: boolean;
   recommendation?: DischargeRecommendation;
+  recommendationHistory?: DischargeRecommendation[];
   dischargedAt?: string;
   deceasedAt?: string;
 }
@@ -37,6 +44,7 @@ export interface TemperatureReading {
   recordedAt: string;
   correctedAt?: string;
   previous?: { celsius: number; fever: boolean };
+  changes?: ReadingChange[];
 }
 
 export interface DoctorVisit {

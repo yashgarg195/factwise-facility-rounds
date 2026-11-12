@@ -4,6 +4,8 @@ import { addDays, facilityDate } from "../src/lib/dates.ts";
 import {
   admitPatient,
   canRecommend,
+  canConfirmDischarge,
+  recommendationEvidence,
   completeVisit,
   confirmDischarge,
   doctorStatus,
@@ -21,6 +23,8 @@ import type { FacilityState } from "../src/lib/types.ts";
 const NOW = new Date("2026-11-12T06:00:00Z"); // 11:30 IST
 const later = (min: number) => new Date(NOW.getTime() + min * 60_000);
 const TODAY = facilityDate(NOW);
+const approval = (state: FacilityState, patientId: string) => ({ patientId, evidence: recommendationEvidence(state, patientId, TODAY) });
+const amendment = (date = TODAY, expectedRevision: number | null = 0) => ({ date, expectedRevision, reason: "Transcription corrected" });
 
 function ok(r: ActionResult): FacilityState {
   if (!r.ok) assert.fail(r.error);
@@ -61,11 +65,11 @@ test("full demo: nurse -> doctor -> administrator", () => {
   assert.match(err(completeVisit(s, "doctor", { patientId: id }, later(1))), /not recorded/);
   s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.8", fever: false }, later(2)));
   assert.match(err(recordTemperature(s, "nurse", { patientId: id, celsius: "36.9", fever: false }, later(3))), /already recorded/);
-  assert.match(err(recommendDischarge(s, "doctor", { patientId: id }, later(4))), /Complete today's visit/);
+  assert.match(err(recommendDischarge(s, "doctor", approval(s, id), later(4))), /Complete today's visit/);
   s = ok(completeVisit(s, "doctor", { patientId: id, note: "Well." }, later(5)));
   assert.match(err(completeVisit(s, "doctor", { patientId: id }, later(6))), /already complete/);
   assert.match(err(confirmDischarge(s, "admin", { patientId: id }, later(6))), /has not recommended/);
-  s = ok(recommendDischarge(s, "doctor", { patientId: id }, later(7)));
+  s = ok(recommendDischarge(s, "doctor", approval(s, id), later(7)));
   assert.match(err(confirmDischarge(s, "nurse", { patientId: id }, later(8))), /Only an Administrator/);
   s = ok(confirmDischarge(s, "admin", { patientId: id }, later(9)));
   assert.match(err(confirmDischarge(s, "admin", { patientId: id }, later(10))), /already discharged/);
@@ -86,11 +90,11 @@ test("temperature validation and correction", () => {
   assert.match(err(recordTemperature(s, "doctor", { patientId: id, celsius: "37.0", fever: false }, NOW)), /Only a Nurse/);
 
   s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "38.4", fever: true }, NOW));
-  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.9", fever: false, correction: true }, later(5)));
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.9", fever: false, amendment: amendment() }, later(5)));
   const r = s.readings.filter((x) => x.patientId === id && x.date === TODAY);
   assert.equal(r.length, 1);
   assert.equal(r[0].celsius, 36.9);
-  assert.deepEqual(r[0].previous, { celsius: 38.4, fever: true });
+  assert.deepEqual(r[0].changes?.[0].previous, { celsius: 38.4, fever: true });
 });
 
 test("a fever after the recommendation blocks discharge until the doctor renews it", () => {
@@ -98,11 +102,11 @@ test("a fever after the recommendation blocks discharge until the doctor renews 
   const id = byRoom(s, 1).id;
   s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.8", fever: false }, NOW));
   s = ok(completeVisit(s, "doctor", { patientId: id }, later(1)));
-  s = ok(recommendDischarge(s, "doctor", { patientId: id }, later(2)));
-  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "38.1", fever: true, correction: true }, later(3)));
-  assert.match(err(confirmDischarge(s, "admin", { patientId: id }, later(4))), /no longer valid.*Fever recorded today/);
+  s = ok(recommendDischarge(s, "doctor", approval(s, id), later(2)));
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "38.1", fever: true, amendment: amendment() }, later(3)));
+  assert.match(err(confirmDischarge(s, "admin", { patientId: id }, later(4))), /no longer valid.*reviewed reading/);
 
-  s = ok(withdrawRecommendation(s, "doctor", { patientId: id }));
+  s = ok(withdrawRecommendation(s, "doctor", { patientId: id }, later(5)));
   assert.equal(canRecommend(s, s.patients.find((p) => p.id === id)!, TODAY).allowed, false);
   // The seeded stale recommendation in room 6 is blocked as well.
   assert.match(err(confirmDischarge(s, "admin", { patientId: byRoom(s, 6).id }, NOW)), /no longer valid/);
@@ -118,13 +122,57 @@ test("streak uses completed days only; today's No fever counts tomorrow", () => 
   assert.equal(eligibility(s, p, addDays(TODAY, 1)).streak, 1);
 });
 
+test("dated corrections preserve review history and block a previously approved reading version", () => {
+  let s = createSeedState(NOW);
+  const id = byRoom(s, 1).id;
+  const date = addDays(TODAY, -2);
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.8", fever: false }, NOW));
+  s = ok(completeVisit(s, "doctor", { patientId: id }, later(1)));
+  const original = approval(s, id);
+  s = ok(recommendDischarge(s, "doctor", original, later(2)));
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "37.3", fever: false, amendment: amendment(date) }, later(3)));
+  assert.match(err(confirmDischarge(s, "admin", { patientId: id }, later(4))), /reviewed reading/);
+  assert.match(err(recommendDischarge(s, "doctor", original, later(4))), /readings changed/);
+  s = ok(recommendDischarge(s, "doctor", approval(s, id), later(5)));
+  assert.equal(byRoom(s, 1).recommendationHistory?.[0].recommendedAt, later(2).toISOString());
+  assert.equal(s.readings.find((r) => r.patientId === id && r.date === date)?.changes?.[0].reason, amendment().reason);
+  assert.equal(canConfirmDischarge(s, byRoom(s, 1), TODAY).allowed, true);
+});
+
+test("a later fever stays on hold after correction; missed follow-up days block confirmation", () => {
+  let s = createSeedState(NOW);
+  const id = byRoom(s, 1).id;
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.8", fever: false }, NOW));
+  s = ok(completeVisit(s, "doctor", { patientId: id }, later(1)));
+  s = ok(recommendDischarge(s, "doctor", approval(s, id), later(2)));
+  const tomorrow = addDays(TODAY, 1);
+  assert.equal(canConfirmDischarge(s, byRoom(s, 1), tomorrow).allowed, true);
+  assert.match(canConfirmDischarge(s, byRoom(s, 1), addDays(TODAY, 2)).reason ?? "", /No reading/);
+  const next = new Date(`${tomorrow}T06:00:00Z`);
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "38.2", fever: true }, next));
+  s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "37.1", fever: false, amendment: amendment(tomorrow) }, next));
+  assert.match(canConfirmDischarge(s, byRoom(s, 1), tomorrow).reason ?? "", /Fever recorded/);
+});
+
+test("a missing past reading can be added with a reason; the admission date stays excluded", () => {
+  const s = createSeedState(NOW);
+  const patient = byRoom(s, 2);
+  const date = addDays(TODAY, -2);
+  const input = { patientId: patient.id, celsius: "36.7", fever: false, amendment: amendment(date, null) };
+  assert.match(err(recordTemperature(s, "nurse", { ...input, amendment: { ...input.amendment, reason: "" } }, NOW)), /reason/);
+  const updated = ok(recordTemperature(s, "nurse", input, NOW));
+  assert.equal(updated.readings.find((r) => r.patientId === patient.id && r.date === date)?.changes?.[0].previous, null);
+  assert.equal(eligibility(updated, patient, TODAY).eligible, true);
+  assert.equal(eligibility(updated, { ...patient, admittedOn: addDays(TODAY, -3) }, TODAY).eligible, false);
+});
+
 test("admission respects capacity and reuses the freed room", () => {
   let s = createSeedState(NOW);
   assert.match(err(admitPatient(s, "admin", { name: "New Person", age: "40", sex: "F" }, NOW)), /All 74 beds/);
   const id = byRoom(s, 1).id;
   s = ok(recordTemperature(s, "nurse", { patientId: id, celsius: "36.8", fever: false }, NOW));
   s = ok(completeVisit(s, "doctor", { patientId: id }, later(1)));
-  s = ok(recommendDischarge(s, "doctor", { patientId: id }, later(2)));
+  s = ok(recommendDischarge(s, "doctor", approval(s, id), later(2)));
   s = ok(confirmDischarge(s, "admin", { patientId: id }, later(3)));
   assert.match(err(admitPatient(s, "admin", { name: "X", age: "40", sex: "F" }, NOW)), /name/);
   s = ok(admitPatient(s, "admin", { name: "New Person", age: "40", sex: "F" }, later(4)));

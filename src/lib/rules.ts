@@ -5,9 +5,11 @@ import {
   MORTALITY_BENCHMARK,
   ROLE_LABELS,
   type DoctorVisit,
+  type DischargeRecommendation,
   type FacilityState,
   type Patient,
   type Role,
+  type ReadingVersion,
   type TemperatureReading,
 } from "./types.ts";
 
@@ -87,19 +89,21 @@ function checkDay(state: FacilityState, patientId: string, date: string): DayChe
 export function eligibility(state: FacilityState, p: Patient, today: string): Eligibility {
   const days: DayCheck[] = [];
   for (let n = FEVER_FREE_DAYS_REQUIRED; n >= 1; n--) {
-    days.push(checkDay(state, p.id, addDays(today, -n)));
+    const date = addDays(today, -n);
+    days.push(date > p.admittedOn ? checkDay(state, p.id, date) : { date, result: "missing" });
   }
   const todayCheck = checkDay(state, p.id, today);
   const blockers: string[] = [];
   for (const d of days) {
-    if (d.result === "missing") blockers.push(`No reading on ${formatDate(d.date)}`);
+    if (d.date <= p.admittedOn) blockers.push(`${formatDate(d.date)} is on or before the admission date`);
+    else if (d.result === "missing") blockers.push(`No reading on ${formatDate(d.date)}`);
     if (d.result === "fever") blockers.push(`Fever on ${formatDate(d.date)}`);
   }
   if (todayCheck.result === "fever") blockers.push("Fever recorded today");
 
   let streak = 0;
   const stayDays = Math.max(0, daysBetween(p.admittedOn, today));
-  for (let n = 1; n <= stayDays; n++) {
+  for (let n = 1; n < stayDays; n++) {
     if (checkDay(state, p.id, addDays(today, -n)).result !== "no_fever") break;
     streak++;
   }
@@ -112,21 +116,49 @@ export interface Check {
 }
 
 export function canRecommend(state: FacilityState, p: Patient, today: string): Check {
-  if (p.status === "pending_discharge") return { allowed: false, reason: "Discharge already recommended." };
-  if (p.status !== "admitted") return { allowed: false, reason: "Patient is not active." };
+  if (!isActive(p)) return { allowed: false, reason: "Patient is not active." };
+  if (p.status === "pending_discharge" && canConfirmDischarge(state, p, today).allowed) {
+    return { allowed: false, reason: "Discharge already recommended." };
+  }
   const e = eligibility(state, p, today);
   if (!e.eligible) return { allowed: false, reason: `Not eligible: ${e.blockers.join("; ")}.` };
+  if (e.today.result === "missing") return { allowed: false, reason: "Record today's temperature before recommending discharge." };
   if (!visitFor(state, p.id, today)) {
     return { allowed: false, reason: "Complete today's visit before you recommend discharge." };
   }
   return { allowed: true };
 }
 
+export function recommendationEvidence(state: FacilityState, patientId: string, today: string): ReadingVersion[] {
+  return Array.from({ length: FEVER_FREE_DAYS_REQUIRED + 1 }, (_, offset) => {
+    const date = addDays(today, -offset);
+    return { date, revision: readingFor(state, patientId, date)?.changes?.length ?? 0 };
+  });
+}
+
+function reviewReason(state: FacilityState, p: Patient, recommendation: DischargeRecommendation, today: string) {
+  if (recommendation.review) return recommendation.review.reason;
+  const laterFever = state.readings.find((r) => r.patientId === p.id && r.date > recommendation.facilityDate && r.date <= today && r.fever);
+  if (laterFever) return `Fever recorded on ${formatDate(laterFever.date)} after recommendation.`;
+  if (recommendation.evidence?.length !== FEVER_FREE_DAYS_REQUIRED + 1) {
+    return "The doctor must review the readings for this older recommendation.";
+  }
+  for (const { date, revision } of recommendation.evidence) {
+    const reading = readingFor(state, p.id, date);
+    if (reading?.fever !== false || (reading.changes?.length ?? 0) !== revision) {
+      return `The reviewed reading for ${formatDate(date)} changed. The doctor must review it.`;
+    }
+  }
+  return null;
+}
+
 export function canConfirmDischarge(state: FacilityState, p: Patient, today: string): Check {
   if (p.status === "discharged") return { allowed: false, reason: "Patient is already discharged." };
-  if (p.status !== "pending_discharge") {
+  if (p.status !== "pending_discharge" || !p.recommendation) {
     return { allowed: false, reason: "A doctor has not recommended discharge." };
   }
+  const reason = reviewReason(state, p, p.recommendation, today);
+  if (reason) return { allowed: false, reason: `Recommendation is no longer valid: ${reason}` };
   const e = eligibility(state, p, today);
   if (!e.eligible) {
     return {
@@ -214,7 +246,7 @@ export interface TemperatureInput {
   patientId: string;
   celsius: string;
   fever: boolean | null;
-  correction?: boolean;
+  amendment?: { date: string; reason: string; expectedRevision: number | null };
 }
 
 export function recordTemperature(
@@ -232,47 +264,54 @@ export function recordTemperature(
   if (input.fever === null) return fail("Select Fever or No fever.");
 
   const today = facilityDate(now);
-  const existing = readingFor(state, p.id, today);
+  const date = input.amendment?.date ?? today;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < p.admittedOn || date > today || addDays(date, 0) !== date) {
+    return fail("Choose a valid date from admission through today.");
+  }
+  const existing = readingFor(state, p.id, date);
   const at = now.toISOString();
+  const values = { celsius: parsed.value, fever: input.fever };
+  const amendment = input.amendment;
 
-  if (existing && !input.correction) {
+  if (existing && !amendment) {
     return fail(
       `Today's temperature is already recorded (${existing.celsius.toFixed(1)} °C at ${formatTime(existing.recordedAt)}). Use "Correct reading" to change it.`,
     );
   }
-  if (!existing && input.correction) return fail("There is no reading today to correct.");
-
-  if (existing) {
-    if (existing.celsius === parsed.value && existing.fever === input.fever) {
-      return fail("The correction is the same as the saved reading.");
+  const reason = amendment?.reason.trim();
+  if (amendment) {
+    if (!reason || reason.length > 200) return fail("Enter a reason of 1 to 200 characters.");
+    if (amendment.expectedRevision !== (existing ? existing.changes?.length ?? 0 : null)) {
+      return fail("This reading changed. Reopen it and review the latest values.");
     }
-    const corrected: TemperatureReading = {
-      ...existing,
-      celsius: parsed.value,
-      fever: input.fever,
-      correctedAt: at,
-      previous: existing.previous ?? { celsius: existing.celsius, fever: existing.fever },
-    };
-    return {
-      ok: true,
-      state: { ...state, readings: state.readings.map((r) => (r.id === existing.id ? corrected : r)) },
-      message: `Corrected today's reading for ${p.name}.`,
-    };
+    if (existing?.celsius === values.celsius && existing.fever === values.fever) return fail("The correction is the same as the saved reading.");
   }
 
-  const [id, nextRecordNumber] = nextId(state, "T");
+  const [id, nextRecordNumber] = existing ? [existing.id, state.nextRecordNumber] : nextId(state, "T");
+  const previous = existing ? { celsius: existing.celsius, fever: existing.fever } : null;
   const reading: TemperatureReading = {
+    ...existing,
     id,
     patientId: p.id,
-    date: today,
-    celsius: parsed.value,
-    fever: input.fever,
-    recordedAt: at,
+    date,
+    ...values,
+    recordedAt: existing?.recordedAt ?? at,
+    ...(reason && {
+      correctedAt: at,
+      changes: [...(existing?.changes ?? []), { at, reason, previous, next: values }],
+    }),
   };
+  const readings = existing ? state.readings.map((r) => r.id === id ? reading : r) : [...state.readings, reading];
+  const next = { ...state, nextRecordNumber, readings };
+  if (p.recommendation && !p.recommendation.review) {
+    const hold = reviewReason(next, p, p.recommendation, today);
+    if (hold) next.patients = updatePatient(next, p.id, { recommendation: { ...p.recommendation, review: { at, reason: hold } } });
+  }
   return {
     ok: true,
-    state: { ...state, nextRecordNumber, readings: [...state.readings, reading] },
-    message: `Saved ${parsed.value.toFixed(1)} °C (${input.fever ? "Fever" : "No fever"}) for ${p.name}.`,
+    state: next,
+    message: amendment ? `Saved the reading for ${formatDate(date)} for ${p.name}.`
+      : `Saved ${parsed.value.toFixed(1)} °C (${input.fever ? "Fever" : "No fever"}) for ${p.name}.`,
   };
 }
 
@@ -313,7 +352,7 @@ export function completeVisit(
 export function recommendDischarge(
   state: FacilityState,
   role: Role,
-  input: { patientId: string },
+  input: { patientId: string; evidence: ReadingVersion[] },
   now: Date,
 ): ActionResult {
   const roleError = requireRole(role, "doctor");
@@ -323,23 +362,37 @@ export function recommendDischarge(
   const today = facilityDate(now);
   const check = canRecommend(state, p, today);
   if (!check.allowed) return fail(check.reason ?? "Discharge cannot be recommended.");
+  const evidence = recommendationEvidence(state, p.id, today);
+  if (input.evidence.length !== evidence.length || evidence.some(({ date, revision }, index) =>
+    date !== input.evidence[index].date || revision !== input.evidence[index].revision)) {
+    return fail("The readings changed. Review the latest readings before recommending discharge.");
+  }
+  const at = now.toISOString();
   return {
     ok: true,
     state: {
       ...state,
       patients: updatePatient(state, p.id, {
         status: "pending_discharge",
-        recommendation: { recommendedAt: now.toISOString(), facilityDate: today },
+        recommendationHistory: archiveRecommendation(p, at, "Replaced after doctor review."),
+        recommendation: { recommendedAt: at, facilityDate: today, evidence },
       }),
     },
     message: `Discharge recommended for ${p.name}. Sent to Administrator.`,
   };
 }
 
+function archiveRecommendation(p: Patient, at: string, reason: string) {
+  const history = p.recommendationHistory ?? [];
+  const recommendation = p.recommendation;
+  return recommendation ? [...history, { ...recommendation, review: recommendation.review ?? { at, reason } }] : history;
+}
+
 export function withdrawRecommendation(
   state: FacilityState,
   role: Role,
   input: { patientId: string },
+  now: Date,
 ): ActionResult {
   const roleError = requireRole(role, "doctor");
   if (roleError) return fail(roleError);
@@ -348,7 +401,10 @@ export function withdrawRecommendation(
   if (p.status !== "pending_discharge") return fail("There is no recommendation to withdraw.");
   return {
     ok: true,
-    state: { ...state, patients: updatePatient(state, p.id, { status: "admitted", recommendation: undefined }) },
+    state: { ...state, patients: updatePatient(state, p.id, {
+      status: "admitted", recommendation: undefined,
+      recommendationHistory: archiveRecommendation(p, now.toISOString(), "Withdrawn by the doctor."),
+    }) },
     message: `Recommendation withdrawn for ${p.name}. You can recommend again when the patient is eligible.`,
   };
 }
@@ -393,6 +449,7 @@ export function recordDeath(
         status: "deceased",
         deceasedAt: now.toISOString(),
         recommendation: undefined,
+        recommendationHistory: archiveRecommendation(p, now.toISOString(), "Closed when death was recorded."),
       }),
     },
     message: `Death recorded for ${p.name}. Room ${p.room} is now free.`,

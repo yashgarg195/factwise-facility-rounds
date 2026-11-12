@@ -24,6 +24,13 @@ Use **Reset demo** in the header to restore the seed. Seed dates are relative to
 
 Edge cases in the seed: room 2 (a missing reading breaks the streak), room 3 (fever yesterday), room 4 (reading done, visit pending), room 5 (reading and visit done), room 6 (recommendation blocked by a fever today).
 
+## Corrections and discharge review
+
+- Nurses can add a missing reading or correct a reading from admission through today. Dated changes require a reason and preserve the previous values in the patient drawer.
+- Doctors use **Ready to recommend** after completing the visit. The prototype counts the previous three completed facility days after the admission date, with one recorded no-fever result per day.
+- Approval records which readings were reviewed. Changing a reviewed reading or recording a later fever puts approval on hold until the doctor renews it. Recommendations carry across midnight. At confirmation, a missing reading in the current three completed days blocks discharge. Older recommendations without a record of the reviewed readings need doctor review.
+- Patient worklists support queue, room, and name sorting. The discharge queue defaults to oldest recommendation first and can show ready and held cases separately.
+
 ## Structure
 
 | Path | Purpose |

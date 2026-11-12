@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { facilityDate, formatDate, formatDateTime } from "@/lib/dates";
-import { activePatients, admitPatient, canConfirmDischarge, eligibility, occupancy, outcomes, readingFor } from "@/lib/rules";
+import { activePatients, admitPatient, canConfirmDischarge, occupancy, outcomes, readingFor } from "@/lib/rules";
 import type { FacilityState, Patient } from "@/lib/types";
 import { CAPACITY, MORTALITY_BENCHMARK, SUCCESS_BENCHMARK } from "@/lib/types";
 import { DemoTag } from "./badges";
@@ -84,9 +84,16 @@ export function WardMap({ state, today, onOpen }: { state: FacilityState; today:
 }
 
 export function DischargeQueue({ state, today, onOpen }: { state: FacilityState; today: string; onOpen: (id: string) => void }) {
+  const [filter, setFilter] = useState("All");
+  const [order, setOrder] = useState("oldest");
   const pending = state.patients
     .filter((p) => p.status === "pending_discharge")
-    .sort((a, b) => (a.recommendation?.recommendedAt ?? "").localeCompare(b.recommendation?.recommendedAt ?? ""));
+    .sort((a, b) => {
+      if (order === "room") return a.room - b.room;
+      if (order === "name") return a.name.localeCompare(b.name) || a.room - b.room;
+      const date = (a.recommendation?.recommendedAt ?? "").localeCompare(b.recommendation?.recommendedAt ?? "");
+      return (order === "newest" ? -date : date) || a.room - b.room;
+    });
   const ready = pending.filter((p) => canConfirmDischarge(state, p, today).allowed);
   const blocked = pending.filter((p) => !canConfirmDischarge(state, p, today).allowed);
 
@@ -102,7 +109,7 @@ export function DischargeQueue({ state, today, onOpen }: { state: FacilityState;
           Recommended {p.recommendation ? formatDateTime(p.recommendation.recommendedAt) : "–"}
         </div>
         {isBlocked && (
-          <div className="mt-1 text-[13px] text-sienna">Blocked: {eligibility(state, p, today).blockers.join("; ")}. The doctor must review it.</div>
+          <div className="mt-1 text-[13px] text-sienna">{canConfirmDischarge(state, p, today).reason}</div>
         )}
       </div>
       <Button size="sm" variant={isBlocked ? "ghost" : "filled"} onClick={() => onOpen(p.id)}>
@@ -113,23 +120,38 @@ export function DischargeQueue({ state, today, onOpen }: { state: FacilityState;
   );
 
   return (
-    <Card title="Discharge queue" tone="cream" aside={<span className="text-[13px] text-ash">Oldest recommendation first</span>}>
+    <Card title="Discharge queue" tone="cream">
       {pending.length === 0 ? (
         <p className="text-[15px] text-muted">No recommendations. A doctor recommends discharge after 3 full days without fever.</p>
       ) : (
         <div className="space-y-4">
-          <div>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Filter discharge queue">
+              {["All", "Ready to confirm", "Needs doctor review"].map((label) => <button key={label} type="button"
+                aria-pressed={filter === label} onClick={() => setFilter(label)}
+                className={`pill pill-sm ${filter === label ? "pill-filled" : "pill-ghost border-hairline bg-paper"}`}>{label}</button>)}
+            </div>
+            <label className="flex flex-wrap items-center gap-2 text-[13px] text-muted">Sort discharges by
+              <select value={order} onChange={(event) => setOrder(event.target.value)}
+                className="max-w-full rounded-full border border-hairline bg-paper px-3 py-2 text-ink">
+                <option value="oldest">Oldest recommendation</option><option value="newest">Newest recommendation</option>
+                <option value="room">Room, low to high</option><option value="name">Patient name, A–Z</option>
+              </select>
+            </label>
+          </div>
+          {filter !== "Needs doctor review" && <div>
             <Eyebrow>Ready to confirm · {ready.length}</Eyebrow>
             {ready.length === 0 ? (
               <p className="py-2 text-[15px] text-muted">None right now.</p>
             ) : (
               <ul className="divide-y divide-blush">{ready.map((p) => row(p, false))}</ul>
             )}
-          </div>
-          {blocked.length > 0 && (
+          </div>}
+          {filter !== "Ready to confirm" && (blocked.length > 0 || filter === "Needs doctor review") && (
             <div>
               <Eyebrow>Blocked: eligibility changed · {blocked.length}</Eyebrow>
-              <ul className="divide-y divide-blush">{blocked.map((p) => row(p, true))}</ul>
+              {blocked.length > 0 ? <ul className="divide-y divide-blush">{blocked.map((p) => row(p, true))}</ul>
+                : <p className="py-2 text-[15px] text-muted">None right now.</p>}
             </div>
           )}
         </div>

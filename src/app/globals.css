@@ -1,0 +1,324 @@
+@import "tailwindcss";
+
+/* Design language: serif headlines on warm paper, ink pills, one warm accent surface.
+   Meaning stays inside the palette: ink = normal, green = clear, sienna on blush = fever / blocked,
+   pop orange = "needs action now" (never for small body text). */
+@theme inline {
+  --font-serif: var(--ff-serif), Georgia, ui-serif, serif;
+  --font-sans: var(--ff-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  --color-ink: #17191c;
+  --color-ink-soft: #2b2e33;
+  --color-paper: #ffffff;
+  --color-mist: #f2f2f3;
+  --color-fog: #fafafb;
+  --color-muted: #5f636d;
+  --color-ash: #6b6f79;
+  --color-smoke: #a3a6af;
+  --color-hairline: #ececec;
+  --color-blush: #fbe1d1;
+  --color-sienna: #5d2a1a;
+  --color-pop: #d4572a;
+  --color-popwash: #ffe9dc;
+  --color-cream: #fdf8f4;
+  --color-go: #2f7a4f;
+  --color-gowash: #e4f1e8;
+
+  --radius-card: 24px;
+  --radius-elevated: 20px;
+  --radius-small: 16px;
+
+  --shadow-artifact: 0 0 0 1px rgba(4, 23, 43, 0.05), 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --shadow-popover: 0 0 0 1px rgba(0, 0, 0, 0.05), 0 4px 24px 0 rgba(0, 0, 0, 0.08);
+}
+
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-blush);
+  color: var(--color-sienna);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------- headings */
+
+.display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+/* Italic words in serif headings get a peach marker that swipes in under them. */
+.display em {
+  font-style: italic;
+  color: var(--color-sienna);
+  padding-inline: 0.06em;
+  margin-inline: -0.06em;
+  background: linear-gradient(var(--color-popwash), var(--color-popwash)) no-repeat 0 78% / 0% 0.32em;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  animation: marker 760ms var(--ease-out) 260ms both;
+}
+
+@keyframes marker {
+  to {
+    background-size: 100% 0.32em;
+  }
+}
+
+/* ---------------------------------------------------------------- pills */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 20px;
+  border: 1px solid var(--color-ink);
+  border-radius: 9999px;
+  font-size: 15px;
+  white-space: nowrap;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    color 160ms var(--ease-out),
+    scale 240ms var(--ease-bounce);
+}
+
+.pill:active:not(:disabled) {
+  scale: 0.95;
+  transition-duration: 80ms;
+}
+
+.pill-sm {
+  min-height: 36px;
+  padding: 0 16px;
+  font-size: 14px;
+}
+
+.pill-filled {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+.pill-filled:hover:not(:disabled) {
+  background: var(--color-sienna);
+  border-color: var(--color-sienna);
+}
+
+.pill-ghost {
+  background: transparent;
+  color: var(--color-ink);
+}
+
+.pill-ghost:hover:not(:disabled) {
+  background: var(--color-blush);
+  border-color: var(--color-sienna);
+  color: var(--color-sienna);
+}
+
+.pill-danger {
+  background: var(--color-sienna);
+  border-color: var(--color-sienna);
+  color: var(--color-paper);
+}
+
+.pill-danger:hover:not(:disabled) {
+  background: #43190c;
+}
+
+.pill-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--color-muted);
+}
+
+.pill-quiet:hover:not(:disabled) {
+  background: var(--color-mist);
+  color: var(--color-ink);
+}
+
+.pill:disabled {
+  cursor: not-allowed;
+  background: var(--color-mist);
+  border-color: var(--color-hairline);
+  color: var(--color-muted);
+}
+
+/* Arrow links lean toward where they go. */
+.arrow {
+  display: inline-block;
+  transition: translate 240ms var(--ease-bounce);
+}
+
+.pill:hover .arrow,
+.text-link:hover .arrow {
+  translate: 4px 0;
+}
+
+/* ----------------------------------------------------------- live dot */
+
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-go);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-go) 18%, transparent);
+}
+
+.live-dot.is-pulsing {
+  background: var(--color-pop);
+  box-shadow: none;
+  animation: live-pulse 1.1s var(--ease-in-out) infinite;
+}
+
+@keyframes live-pulse {
+  50% {
+    opacity: 0.25;
+    scale: 0.7;
+  }
+}
+
+/* -------------------------------------------------------------- stamp */
+
+.stamp {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  z-index: 1;
+  padding: 3px 12px 4px;
+  border: 2.5px solid currentColor;
+  border-radius: 10px;
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-style: italic;
+  line-height: 1;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  rotate: -9deg;
+  animation: stamp 620ms var(--ease-out) 200ms both;
+}
+
+.stamp-go {
+  color: var(--color-go);
+  rotate: 6deg;
+}
+
+.stamp-pop {
+  color: var(--color-pop);
+}
+
+.stamp-ink {
+  color: var(--color-ink);
+  opacity: 0.8;
+}
+
+@keyframes stamp {
+  0% {
+    opacity: 0;
+    scale: 2.2;
+  }
+  55% {
+    opacity: 1;
+    scale: 0.92;
+  }
+  75% {
+    scale: 1.04;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+/* ------------------------------------------------------------ motion */
+
+.rise {
+  animation: rise 520ms var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 60ms);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.drawer {
+  animation: drawer-in 360ms var(--ease-out) both;
+}
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+}
+
+.stroke-in {
+  stroke-dasharray: 1000;
+  animation: stroke-in 900ms var(--ease-out) 200ms both;
+}
+
+@keyframes stroke-in {
+  from {
+    stroke-dashoffset: 1000;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.bed {
+  transition:
+    scale 240ms var(--ease-bounce),
+    background-color 160ms var(--ease-out);
+}
+
+.bed:hover {
+  scale: 1.18;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+  .display em {
+    background-size: 100% 0.32em;
+  }
+}
